@@ -646,6 +646,58 @@ func TestTRun(t *T) {
 	}
 }
 
+func TestBRunRepeatedFailure(t *T) {
+	oldCount, oldCPUList := *count, cpuList
+	oldProcs := runtime.GOMAXPROCS(0)
+	defer func() {
+		*count, cpuList = oldCount, oldCPUList
+		runtime.GOMAXPROCS(oldProcs)
+	}()
+	for _, tc := range []struct {
+		name  string
+		count uint
+		cpus  []int
+	}{
+		{name: "count", count: 2, cpus: []int{1}},
+		{name: "cpu", count: 1, cpus: []int{1, 2}},
+	} {
+		t.Run(tc.name, func(t *T) {
+			*count, cpuList = tc.count, tc.cpus
+			var calls int
+			var ok bool
+			root := &B{
+				common: common{
+					signal: make(chan bool),
+					name:   "root",
+					w:      &strings.Builder{},
+				},
+				benchTime: durationOrCountFlag{n: 1},
+				bstate: &benchState{
+					match: newMatcher(regexp.MatchString, ".", "-test.bench", ""),
+				},
+				benchFunc: func(b *B) {
+					ok = b.Run("sub", func(b *B) {
+						calls++
+						if calls == 2 {
+							b.Fatal("second run fails")
+						}
+					})
+				},
+			}
+			root.runN(1)
+			if got, want := calls, 2; got != want {
+				t.Errorf("benchmark calls = %d, want %d", got, want)
+			}
+			if got, want := ok, false; got != want {
+				t.Errorf("Run = %t, want %t", got, want)
+			}
+			if got, want := root.Failed(), true; got != want {
+				t.Errorf("root.Failed = %t, want %t", got, want)
+			}
+		})
+	}
+}
+
 func TestBRun(t *T) {
 	work := func(b *B) {
 		for i := 0; i < b.N; i++ {
